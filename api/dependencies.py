@@ -11,6 +11,9 @@ import logging
 import os
 from functools import lru_cache
 
+from fastapi import HTTPException, Security, status
+from fastapi.security import APIKeyHeader
+
 from dotenv import load_dotenv
 
 from rag.pipeline import RAGPipeline
@@ -21,6 +24,45 @@ from vectorstore import get_vector_store
 
 load_dotenv()
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# API Key Authentication
+# ---------------------------------------------------------------------------
+
+_api_key_header = APIKeyHeader(name="X-API-KEY", auto_error=False)
+
+
+def require_api_key(key: str | None = Security(_api_key_header)) -> str:
+    """
+    Dependency that enforces X-API-KEY header authentication.
+
+    Set API_KEY in your .env file. If API_KEY is not configured,
+    authentication is skipped (development convenience only).
+
+    Usage in a route:
+        @router.post("/chat")
+        async def chat(request: ..., _auth: str = Depends(require_api_key)):
+    """
+    configured_key = os.getenv("API_KEY", "")
+
+    # If no API_KEY is set in env, skip auth (dev mode)
+    if not configured_key:
+        logger.warning(
+            "API_KEY is not set — authentication is disabled. "
+            "Set API_KEY in your .env before deploying."
+        )
+        return "unauthenticated"
+
+    if not key or key != configured_key:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid or missing API key. Set X-API-KEY header.",
+        )
+    return key
+
+# ---------------------------------------------------------------------------
+# Pipeline singleton
+# ---------------------------------------------------------------------------
 
 
 @lru_cache(maxsize=1)

@@ -10,7 +10,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from api.dependencies import get_pipeline
+from api.dependencies import get_pipeline, require_api_key
 from rag.pipeline import RAGPipeline
 from vectorstore import get_vector_store
 
@@ -32,6 +32,7 @@ class DocumentsResponse(BaseModel):
 @router.get("/documents", response_model=DocumentsResponse)
 async def list_documents(
     _pipeline: RAGPipeline = Depends(get_pipeline),
+    _auth: str = Depends(require_api_key),
 ):
     """Return all indexed documents with chunk and page counts."""
     docs = get_vector_store().list_documents()
@@ -46,8 +47,22 @@ async def list_documents(
 async def delete_document(
     filename: str,
     _pipeline: RAGPipeline = Depends(get_pipeline),
+    _auth: str = Depends(require_api_key),
 ):
-    """Delete all chunks for the given document filename."""
+    """
+    Delete all chunks for the given document filename.
+
+    Authentication required — prevents unauthorized knowledge base deletion.
+    Filename is validated to contain only safe characters to prevent
+    path traversal or injection into the vector store query.
+    """
+    # Validate filename — allow only printable characters, no path separators
+    if not filename or "/" in filename or "\\" in filename or ".." in filename:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid filename.",
+        )
+
     deleted = get_vector_store().delete_document(filename)
     if deleted == 0:
         raise HTTPException(

@@ -9,7 +9,7 @@ import logging
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
-from api.dependencies import get_pipeline
+from api.dependencies import get_pipeline, require_api_key
 from rag.ingestion import ingest_pdf
 from rag.pipeline import RAGPipeline
 from services.embedding_service import get_embedding_service
@@ -17,6 +17,9 @@ from vectorstore import get_vector_store
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+_PDF_MAGIC = b"%PDF"
+
 
 
 class IngestResponse(BaseModel):
@@ -52,6 +55,10 @@ async def ingest(
     max_bytes = 50 * 1024 * 1024   # 50 MB
     if len(file_bytes) > max_bytes:
         raise HTTPException(status_code=413, detail="File exceeds 50 MB limit.")
+
+    if not file_bytes.startswith(_PDF_MAGIC):
+        raise HTTPException(status_code=400, 
+            detail="Uploaded file is not a valid PDF.")    
 
     try:
         result = await ingest_pdf(

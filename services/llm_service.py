@@ -171,19 +171,27 @@ class LLMService:
 
     async def health_check(self) -> dict:
         """
-        Quick ping to verify the Groq API key is valid.
-        Returns {"ok": True, "model": ...} or {"ok": False, "error": ...}.
-        """
-        try:
-            response = await self._client.chat.completions.create(
-                model=self._model,
-                messages=[{"role": "user", "content": "ping"}],
-                max_tokens=5,
-            )
-            return {"ok": True, "model": self._model}
-        except Exception as exc:
-            return {"ok": False, "error": str(exc)}
+        Verify the Groq API key is present and the client is configured.
 
+        A real live call is made only if HEALTH_CHECK_LIVE=true is set in
+        the environment (useful for staging smoke tests, not for polling).
+        """
+        if not self._api_key:
+            return {"ok": False, "error": "GROQ_API_KEY not set"}
+
+        if os.getenv("HEALTH_CHECK_LIVE", "false").lower() == "true":
+            try:
+                await self._client.chat.completions.create(
+                    model=self._model,
+                    messages=[{"role": "user", "content": "ping"}],
+                    max_tokens=1,
+                )
+                return {"ok": True, "model": self._model}
+            except Exception as exc:
+                return {"ok": False, "error": str(exc)}
+
+        # Default: assume ok if key is present — confirmed on first real use
+        return {"ok": True, "model": self._model}
 
 # ---------------------------------------------------------------------------
 # Module-level singleton

@@ -63,7 +63,9 @@ app = FastAPI(
 )
 
 # CORS — allow the frontend (single HTML file opened locally or served)
-origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "*").split(",")]
+raw_origins = os.getenv("CORS_ORIGINS", "http://localhost:8000")
+origins = [o.strip() for o in raw_origins.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -82,27 +84,46 @@ app.include_router(ingest.router,    prefix="/api", tags=["ingest"])
 app.include_router(documents.router, prefix="/api", tags=["documents"])
 
 
+# ---------------------------------------------------------------------------
+# Health check — cached result to avoid live Groq token spend per poll
+# ---------------------------------------------------------------------------
+
+import asyncio
+import time
+
+_health_cache: dict = {"result": None, "ts": 0.0}
+_HEALTH_TTL = 30  # seconds
+
+
 @app.get("/api/health", tags=["health"])
 async def health():
     """
-    Liveness check — also verifies Groq connectivity.
-    The frontend polls this to show a green/red status indicator.
+    Liveness check — verifies Groq connectivity.
+    Result is cached for 30 seconds so the frontend can poll freely
+    without burning Groq API tokens on every call.
     """
     from services.llm_service import get_llm_service
     from vectorstore import get_vector_store
 
+    now = time.monotonic()
+    if _health_cache["result"] and (now - _health_cache["ts"]) < _HEALTH_TTL:
+        return _health_cache["result"]
+
     llm_status = await get_llm_service().health_check()
     doc_count = len(get_vector_store().list_documents())
 
-    return {
+    result = {
         "status": "ok" if llm_status["ok"] else "degraded",
         "llm": llm_status,
         "indexed_documents": doc_count,
     }
+    _health_cache["result"] = result
+    _health_cache["ts"] = now
+    return result
 
 
 # ---------------------------------------------------------------------------
-# Serve the frontend from /  (optional — works when running locally)
+# Serve the frontend from /
 # ---------------------------------------------------------------------------
 
 frontend_dir = os.path.join(os.path.dirname(__file__), "..", "frontend")

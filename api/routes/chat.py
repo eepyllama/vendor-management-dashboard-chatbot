@@ -5,13 +5,12 @@ POST /api/chat — run the RAG pipeline and stream the response as SSE.
 Supports Report Mode validation, auto-regeneration retry, and history pruning.
 """
 
-import logging
-import os
-import asyncio
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
-
+import logging #used for debugging and monitoring 
+import os #used to read environment variables
+import asyncio #used to add small delays between streaming chunks for a smoother real-time response experience for the client
+from fastapi import APIRouter, Depends, HTTPException #used to define API routes, handle dependencies, and manage HTTP exceptions in the chat endpoint
+from fastapi.responses import StreamingResponse #used to stream the response from the RAG pipeline back as Server-Sent Events (SSE)
+from pydantic import BaseModel, Field #used to define data models for request validation and structured data handling in the chat endpoint
 from api.dependencies import get_pipeline
 from rag.pipeline import RAGPipeline
 from prompts.report import ReportMode
@@ -68,9 +67,16 @@ def validate_report_table(text: str, mode: ReportMode) -> bool:
             # Check if next line is a separator line (e.g. |---|---|)
             if i + 1 < len(lines):
                 next_line = lines[i + 1]
-                if next_line.startswith("|") and next_line.endswith("|") and "-" in next_line:
+                if (
+                    next_line.startswith("|")
+                    and next_line.endswith("|")
+                    and "-" in next_line
+                ):
                     sep_cols = [col.strip() for col in next_line.split("|")[1:-1]]
-                    if all(all(char in "-:" for char in col) and len(col) > 0 for col in sep_cols):
+                    if all(
+                        all(char in "-:" for char in col) and len(col) > 0
+                        for col in sep_cols
+                    ):
                         found_separator = True
             break
 
@@ -157,7 +163,7 @@ async def chat(
                     valid = validate_report_table(answer, request.mode)
                     if not valid:
                         logger.error("Report validation failed on second attempt. Aborting.")
-                        yield "data: [ERROR] Report validation failed. The generated table did not match the expected schema.\n\n"
+                        yield "data: [ERROR] Report generation failed.  Please try again or rephrase your request.\n\n"
                         yield "data: [DONE]\n\n"
                         return
 
@@ -180,14 +186,14 @@ async def chat(
                 async for chunk in pipeline.stream(
                     query=request.query,
                     history=history,
-                    mode=None,
+                    mode=None, #streams tokens directly without report formatting
                     max_tokens=chat_max_tokens,
                 ):
                     yield chunk
 
         except Exception as exc:
             logger.exception("Stream error: %s", exc)
-            yield f"data: [ERROR] {exc}\n\n"
+            yield "data: [ERROR] An internal error occurred. Please try again.\\n\\n"
 
     return StreamingResponse(
         event_stream(),
